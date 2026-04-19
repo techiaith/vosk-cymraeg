@@ -261,7 +261,9 @@ if [ $stage -ge 10 ]; then
     echo "==== Train a chain model ===="
     echo
     
-    local/chain/run_tdnn_1j_lay12.sh
+    # Uncomment the desired recipe for training
+    #local/chain/run_tdnn_1j_lay12.sh
+    local/chain/run_tdnn_260412.sh
 fi
 
 echo

@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+# Better WER than previous 'run_tdnn_1j_lay13_ep30.sh' recipe on the breton corpus (~80h of audio)
+# I don't have the exact figures.
+# Lowered initial-effective-lrate and final-effective-lrate (0.002 -> 0.0002, 0.002 -> 0.0002)
+# Lowered frames-per-iter (3000000 -> 2000000)
+# Reduced number of epochs (20 -> 5)
+# --- Gweltaz DG (gwel@ik.me), 2026-04-12
+
 # 1j is as 1i but replaces the LDA layer at the input of the
 # network with delta and delta-delta features.
 # Below, 1j2 is just a different rerun of 1j with different
@@ -223,12 +230,12 @@ if [ $stage -le 14 ]; then
     --trainer.add-option="--optimization.memory-compression-level=2" \
     --trainer.srand=$srand \
     --trainer.max-param-change=2.0 \
-    --trainer.num-epochs=30 \
-    --trainer.frames-per-iter=3000000 \
+    --trainer.num-epochs=5 \
+    --trainer.frames-per-iter=2000000 \
     --trainer.optimization.num-jobs-initial=1 \
     --trainer.optimization.num-jobs-final=1 \
-    --trainer.optimization.initial-effective-lrate=0.002 \
-    --trainer.optimization.final-effective-lrate=0.0002 \
+    --trainer.optimization.initial-effective-lrate=0.0002 \
+    --trainer.optimization.final-effective-lrate=0.00002 \
     --trainer.num-chunk-per-minibatch=128,64 \
     --egs.chunk-width=$chunk_width \
     --egs.dir="$common_egs_dir" \
