@@ -6,21 +6,19 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 2 # alternatively, use `count: all` for all GPUs
+              device_ids: ["0"]  # Use GPU 1 only (use ["0", "1"] for both)
               capabilities: [gpu]
     build:
       context: .
       dockerfile: ./Dockerfile
       args:
-        NAME: "Preben Vangberg"
-        AFFIL: "Bangor University"
-        EMAIL: "prv21fgt@bangor.ac.uk"
-        ADDRESS: "Bangor, UK"
-        USERNAME: prv21fgt
-        USER_UID: 1004
-        USER_GID: 1005
+        USERNAME: ${USER}
+        USER_UID: ${UID:-1000}
+        USER_GID: ${GID:-1000}
     volumes:
       - .:/workspaces/vosk
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
     stdin_open: true
     tty: true
 volumes:
