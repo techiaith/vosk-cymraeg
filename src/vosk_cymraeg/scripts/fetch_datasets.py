@@ -11,7 +11,7 @@ from rich.logging import RichHandler
 from vosk_cymraeg.datasets.banc_trawsgrifiadau_bangor import (
     fetch_banc_trawsgrifiadau_bangor,
 )
-from vosk_cymraeg.datasets.common_voice import process_common_voice
+from vosk_cymraeg.datasets.common_voice import fetch_common_voice
 from vosk_cymraeg.datasets.lleisiau_arfor import fetch_lleisiau_arfor
 from vosk_cymraeg.datasets.enwau_cymraeg import fetch_enwau_cymraeg
 
@@ -32,7 +32,7 @@ DATASETS = {
     "cv": Dataset(
         "Common Voice",
         Path("data/interim/cv/cy"),
-        lambda output_path: process_common_voice(Path("data/raw/cv/cy"), output_path),
+        fetch_common_voice,
     ),
     "btb": Dataset(
         "Banc Trawsgrifiadau Bangor",

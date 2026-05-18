@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
+FROM nvidia/cuda:12.6.2-cudnn-devel-ubuntu22.04
 LABEL maintainer="prv21fgt@bangor.ac.uk"
 
 RUN apt-get update && \
@@ -28,7 +28,8 @@ RUN apt-get update && \
 
 RUN git clone https://github.com/kaldi-asr/kaldi.git /opt/kaldi
 WORKDIR /opt/kaldi/tools
-RUN git reset --hard 6f6139300b448e9ffc5abb04f2028928404be55c
+RUN git reset --hard 22f36e5b592b587af5ee50324271df55eff879ab
+COPY openfst-1.8.3.tar.gz /opt/kaldi/tools/openfst-1.8.3.tar.gz
 RUN make -j $(nproc)
 
 WORKDIR /opt/kaldi/src
@@ -36,6 +37,13 @@ RUN ./configure --shared --use-cuda=yes
 RUN make depend -j $(nproc)
 RUN make -j $(nproc)
 RUN find /opt/kaldi  -type f \( -name "*.o" -o -name "*.la" -o -name "*.a" \) -exec rm {} \;
+
+# Patch Kaldi recipe scripts for OpenFST 1.8 (--project_output=true -> --project_type=output).
+# Required because the pinned Kaldi commit ships scripts that still use the old flag,
+# but tools/Makefile pulls OpenFST 1.8.3 which rejects it. Drop this when Kaldi upstream fixes it.
+RUN find /opt/kaldi/egs/wsj/s5/steps /opt/kaldi/egs/wsj/s5/utils \
+    -type f -exec sed -i 's/--project_output=true/--project_type=output/g' {} +
+
 RUN rm -rf /opt/kaldi/.git
 
 WORKDIR /opt/kaldi/
@@ -50,11 +58,11 @@ RUN apt install -y \
     gawk \
     gcc \ 
     git \
-	libsox-fmt-mp3 \
+    libsox-fmt-mp3 \
     locales \
     make \
     neovim \
- 	python2.7 \
+    python2.7 \
     tar \
     wget
 
@@ -64,18 +72,15 @@ RUN locale-gen en_US.UTF-8
 # Force python to refer to python2
 RUN ln -s python2.7 /usr/bin/python
 
-ARG NAME="Preben Vangberg"
-ARG AFFIL="Bangor University"
-ARG EMAIL="prv21fgt@bangor.ac.uk"
-ARG ADDRESS="Bangor, UK"
-
+# SRILM (official site broken, using GitHub mirror)
 WORKDIR /opt/kaldi/tools
-RUN bash install_srilm.sh "$NAME" "$AFFIL" "$EMAIL" "$ADDRESS"
+RUN wget -O srilm.tar.gz "https://github.com/weimeng23/SRILM/raw/master/srilm-1.7.3.tar.gz" && \
+    bash extras/install_srilm.sh
 
-# Setup the user profile (these can be modified as required)
-ARG USERNAME=prv21fgt
-ARG USER_UID=1001
-ARG USER_GID=1001
+# Setup the user profile (automatically uses host user if built with docker compose)
+ARG USERNAME
+ARG USER_UID
+ARG USER_GID
 
 # Create the user
 RUN groupadd --gid $USER_GID $USERNAME \
@@ -104,7 +109,8 @@ RUN git clone https://gitlab.com/prvInSpace/uniplexed-commafiles ~/.config
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Fix to get rid of Git warning
-RUN git config --global --add safe.directory /opt/kaldi
+RUN git config --global --add safe.directory /opt/kaldi && \
+    git config --global --add safe.directory /workspaces/vosk
 
 # Set the workdir to the mounted volume
 WORKDIR /workspaces/vosk

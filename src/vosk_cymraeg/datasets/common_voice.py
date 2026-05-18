@@ -1,93 +1,98 @@
 import logging
+import os
 from pathlib import Path
 
-import polars as pl
-import sox
-from tqdm import tqdm
+import datasets
+from dotenv import load_dotenv
+
+from vosk_cymraeg.datasets.hf_utils import (
+    create_combined_split,
+    dump_dataset_audio_files,
+)
 
 _logger = logging.getLogger(__name__)
 
-DATASET_SPLITS = ["train", "test", "dev", "other"]
+# Mapping from HF split names to our standard names
+# Available splits: train, dev, test, train_all, train_missing, other_with_excluded
+SPLIT_MAPPING = {
+    "train": "train",
+    "dev": "dev",
+    "test": "test",
+    "other_with_excluded": "other",
+}
 
 
-def process_common_voice(input_path: Path, output_path: Path) -> None:
-    _logger.info(f"Loading Common Voice data from local path {str(input_path)!r}")
-    # Determine length of speaker IDs
-    cid_length = determine_cid_length(input_path)
-    _logger.info(f"Smallest N that still yields unique client IDs is {cid_length}")
+def fetch_common_voice(output_path: Path) -> None:
+    """Fetches Common Voice Welsh dataset from HuggingFace techiaith/commonvoice_23_0_cy"""
+    _logger.info("Loading dataset 'techiaith/commonvoice_23_0_cy' from HuggingFace")
 
-    for split in tqdm(DATASET_SPLITS, desc="Converting splits"):
-        # Load the data and construct required columns
-        df = (
-            pl.scan_csv(input_path / f"{split}.tsv", separator="\t", quote_char="")
-            .with_columns(speaker="cvcy-" + pl.col("client_id").str.slice(-cid_length))
-            .with_columns(
-                utterance=pl.col("speaker")
-                + "-"
-                + pl.col("path").str.extract("([0-9]+)")
-            )
-            .select(["speaker", "utterance", "sentence", "path"])
-            .collect()
+    load_dotenv()
+    token = os.environ.get("HF_TOKEN")
+
+    dataset_splits = list(SPLIT_MAPPING.keys())
+
+    for hf_split in dataset_splits:
+        our_split = SPLIT_MAPPING[hf_split]
+        _logger.info(f"Processing split: {hf_split} -> {our_split}")
+
+        ds: datasets.Dataset = datasets.load_dataset(
+            "techiaith/commonvoice_23_0_cy", split=hf_split, token=token
         )
 
-        # Loop through each file and convert from mp3 to wav
-        converted_paths = []
-        for row in tqdm(df.rows(named=True), desc="Converting files"):
-            new_path = output_path / "clips" / f"{row['utterance']}.wav"
-            converted_paths.append(str(new_path))
-            convert_file(
-                input_path / "clips" / row["path"],
-                new_path,
-            )
+        # Determine unique client ID length for speaker naming
+        cid_length = _determine_cid_length(ds)
+        _logger.info(f"Using client ID suffix length: {cid_length}")
 
-        df = df.with_columns(
-            pl.Series("path", converted_paths), pl.lit("cy").alias("lang")
+        # Add speaker column (cvcy- prefix + last N chars of client_id)
+        ds = ds.map(
+            lambda row: {"speaker": f"cvcy-{row['client_id'][-cid_length:]}"},
+            desc="Adding speaker IDs",
         )
 
-        # Select only the stuff we need and write to a csv file
-        df.select(["speaker", "utterance", "path", "lang", "sentence"]).write_csv(
-            output_path / f"{split}.csv"
+        # Add utterance column (speaker + extracted number from path)
+        ds = ds.map(
+            lambda row: {
+                "utterance": f"{row['speaker']}-{_extract_id(row['path'])}"
+            },
+            desc="Adding utterance IDs",
         )
 
-    # Combine all splits and write to csv
-    dfs = [pl.read_csv(output_path / f"{split}.csv") for split in DATASET_SPLITS]
-    pl.concat(dfs).write_csv(output_path / "all.csv")
+        # Dump audio files and replace path column with new paths
+        paths = dump_dataset_audio_files(ds, output_path)
+        ds = ds.remove_columns("path")
+        ds = ds.add_column("path", paths)
+        ds = ds.add_column("lang", ["cy"] * len(ds))
+
+        # Remove audio to save memory
+        ds = ds.remove_columns("audio")
+
+        # Write to CSV
+        ds.to_csv(
+            output_path / f"{our_split}.csv",
+            columns=["speaker", "utterance", "path", "lang", "sentence"],
+        )
+
+    # Combine all splits into all.csv
+    our_splits = list(SPLIT_MAPPING.values())
+    all_df = create_combined_split(output_path, our_splits, validate=False)
+    all_df.write_csv(output_path / "all.csv")
 
 
-def determine_cid_length(input_path: Path) -> int:
-    # Check if we can reduce the speakers to a five letter combination
-    dfs = [
-        pl.read_csv(input_path / f"{split}.tsv", separator="\t", quote_char="")
-        for split in DATASET_SPLITS
-    ]
-    combined = pl.concat(dfs)
+def _determine_cid_length(ds: datasets.Dataset) -> int:
+    """Find the smallest suffix length that yields unique client IDs"""
+    unique_clients = set(ds["client_id"])
 
-    unique_speakers = combined["client_id"].unique()
-    for length in range(4, len(combined["client_id"][0]) + 1):
-        shortened = {cid[-length:] for cid in unique_speakers}
-        if len(shortened) == len(unique_speakers):
+    for length in range(4, 64):
+        shortened = {cid[-length:] for cid in unique_clients}
+        if len(shortened) == len(unique_clients):
             return length
 
-    raise ValueError("Unable to resolve a unique set of speakers")
+    # Fallback to full length
+    return 64
 
 
-def convert_file(input_path: Path, output_path: Path, overwrite: bool = False) -> bool:
-    """Converts the CV .mp3 file provided to a mono channel, 16kHz wav file. If
-    the file exists and overwrite is set to false nothing happens."""
-    if not overwrite and output_path.exists():
-        return
-
-    # Set up transformer
-    tf = sox.Transformer()
-    tf.convert(samplerate=16_000, n_channels=1, bitdepth=16)
-
-    # If parent folder doesn't exist, make
-    output_path.parent.mkdir(exist_ok=True, parents=True)
-
-    # Write converted file to disk
-    status, _, _ = tf.build(
-        input_filepath=input_path,
-        output_filepath=output_path,
-        return_output=True,
-    )
-    return status
+def _extract_id(path: str) -> str:
+    """Extract numeric ID from path like 'common_voice_cy_12345.mp3'"""
+    import re
+    match = re.search(r"(\d+)", path)
+    return match.group(1) if match else path
